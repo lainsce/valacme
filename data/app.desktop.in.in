@@ -1,0 +1,11 @@
+[Desktop Entry]
+Categories=Utility;TextEditor;GTK;
+Comment=A simple IDE inspired by Plan 9's Acme
+Exec=com.example.valacme
+GenericName=IDE
+Icon=com.example.valacme
+Name=Valacme
+StartupNotify=true
+Terminal=false
+Type=Application
+Version=1.0

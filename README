@@ -1,0 +1,30 @@
+# Valacme
+
+A modern implementation of the Plan 9 Acme editor using Vala and GTK4.
+
+## Overview
+
+Valacme tries to be a faithful port of the Acme editor from the Plan 9 operating system to modern Linux desktop environments.
+
+## Requirements
+
+- Vala compiler
+- GTK4
+- Meson
+- Ninja
+
+## Building
+
+```bash
+# Clone the repository
+git clone https://github.com/lainsce/valacme.git
+cd valacme
+
+# Build with Meson
+meson setup builddir
+cd builddir
+ninja
+
+# Run the application
+./valacme
+```
