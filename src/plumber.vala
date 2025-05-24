@@ -20,33 +20,46 @@ public enum PlumbingType {
 public class AcmePlumber : Object {
     private static AcmePlumber? instance;
     
-    // Simple regex patterns
-    private Regex url_pattern;
-    private Regex email_pattern;
-    private Regex file_line_pattern;
-    private Regex file_line_col_pattern;
-    private Regex image_pattern;
-    private Regex compiler_error_pattern;
-    private Regex stack_trace_pattern;
-    private Regex grep_result_pattern;
-    private Regex git_diff_pattern;
+    // Pattern definition for data-driven approach - much cleaner
+    private struct PatternDef {
+        string name;
+        string pattern;
+        PlumbingType type;
+        RegexCompileFlags flags;
+    }
+    
+    // All patterns in one place - easy to maintain and extend
+    private static PatternDef[] PATTERNS = {
+        // Development patterns (check first - more specific)
+        {"compiler_error", """^([^:]+):(\d+):(\d+):\s*(error|warning):""", PlumbingType.COMPILER_ERROR, 0},
+        {"stack_trace", """^\s*at\s+.*\((.*):(\d+)\)""", PlumbingType.STACK_TRACE, 0},
+        {"grep_result", """^([^:]+):(\d+):""", PlumbingType.GREP_RESULT, 0},
+        {"git_diff", """^@@\s+-\d+,?\d*\s+\+(\d+),?\d*\s+@@""", PlumbingType.GIT_DIFF, 0},
+        {"file_line_col", """^(.+):(\d+):(\d+)$""", PlumbingType.FILE_LINE_COL, 0},
+        {"file_line", """^(.+):(\d+)$""", PlumbingType.FILE_LINE, 0},
+        
+        // Basic patterns
+        {"url", """^(https?|ftp)://\S+$""", PlumbingType.URL, 0},
+        {"email", """^[\w\.-]+@[\w\.-]+\.\w+$""", PlumbingType.EMAIL, 0},
+        {"image", """\.(?:jpg|jpeg|png|gif|bmp|svg)$""", PlumbingType.IMAGE, RegexCompileFlags.CASELESS}
+    };
+    
+    private HashTable<string, Regex> compiled_patterns;
     
     private AcmePlumber() {
-        try {
-            // Basic patterns
-            url_pattern = new Regex("""^(https?|ftp)://\S+$""");
-            email_pattern = new Regex("""^[\w\.-]+@[\w\.-]+\.\w+$""");
-            image_pattern = new Regex("""\.(?:jpg|jpeg|png|gif|bmp|svg)$""", RegexCompileFlags.CASELESS);
-            
-            // Development patterns
-            file_line_pattern = new Regex("""^(.+):(\d+)$""");
-            file_line_col_pattern = new Regex("""^(.+):(\d+):(\d+)$""");
-            compiler_error_pattern = new Regex("""^([^:]+):(\d+):(\d+):\s*(error|warning):""");
-            stack_trace_pattern = new Regex("""^\s*at\s+.*\((.*):(\d+)\)""");
-            grep_result_pattern = new Regex("""^([^:]+):(\d+):""");
-            git_diff_pattern = new Regex("""^@@\s+-\d+,?\d*\s+\+(\d+),?\d*\s+@@""");
-        } catch (RegexError e) {
-            warning("Failed to compile plumbing patterns: %s", e.message);
+        compiled_patterns = new HashTable<string, Regex>(str_hash, str_equal);
+        compile_patterns();
+    }
+    
+    // Compile all patterns at startup
+    private void compile_patterns() {
+        foreach (var def in PATTERNS) {
+            try {
+                var regex = new Regex(def.pattern, def.flags);
+                compiled_patterns.insert(def.name, regex);
+            } catch (RegexError e) {
+                warning("Failed to compile pattern %s: %s", def.name, e.message);
+            }
         }
     }
     
@@ -57,30 +70,19 @@ public class AcmePlumber : Object {
         return instance;
     }
     
-    // Simple pattern analysis
+    // Simplified pattern analysis - data-driven
     public PlumbingType analyze_text(string text) {
-        // Check for development patterns first (more specific)
-        if (compiler_error_pattern.match(text)) {
-            return PlumbingType.COMPILER_ERROR;
-        } else if (stack_trace_pattern.match(text)) {
-            return PlumbingType.STACK_TRACE;
-        } else if (grep_result_pattern.match(text)) {
-            return PlumbingType.GREP_RESULT;
-        } else if (git_diff_pattern.match(text)) {
-            return PlumbingType.GIT_DIFF;
-        } else if (file_line_col_pattern.match(text)) {
-            return PlumbingType.FILE_LINE_COL;
-        } else if (file_line_pattern.match(text)) {
-            return PlumbingType.FILE_LINE;
+        // Check patterns in order of specificity (development patterns first)
+        foreach (var def in PATTERNS) {
+            var regex = compiled_patterns.lookup(def.name);
+            if (regex != null && regex.match(text)) {
+                return def.type;
+            }
         }
         
-        // Check for basic patterns
-        else if (url_pattern.match(text)) {
-            return PlumbingType.URL;
-        } else if (email_pattern.match(text)) {
-            return PlumbingType.EMAIL;
-        } else if (looks_like_file(text)) {
-            if (image_pattern.match(text)) {
+        // Check if it looks like a file using simple heuristics
+        if (looks_like_file(text)) {
+            if (compiled_patterns.lookup("image").match(text)) {
                 return PlumbingType.IMAGE;
             } else if (is_directory(text)) {
                 return PlumbingType.DIRECTORY;
@@ -121,40 +123,26 @@ public class AcmePlumber : Object {
         }
     }
     
-    // Simple plumbing actions
+    // Simplified plumbing with generic handlers
     public bool plumb_text(string text, AcmeTextView? source_view) {
         var type = analyze_text(text);
         
         switch (type) {
             case PlumbingType.URL:
-                return open_url(text);
-                
             case PlumbingType.EMAIL:
-                return open_email(text);
-                
             case PlumbingType.IMAGE:
-                return open_image(text);
+                return open_external(text, type);
                 
             case PlumbingType.FILE:
-                return open_file(text, source_view);
-                
             case PlumbingType.DIRECTORY:
-                return open_directory(text, source_view);
+                return open_in_acme(text, source_view, type);
                 
             case PlumbingType.FILE_LINE:
-                return open_file_at_line(text, source_view);
-                
             case PlumbingType.FILE_LINE_COL:
-                return open_file_at_line_col(text, source_view);
-                
             case PlumbingType.COMPILER_ERROR:
-                return handle_compiler_error(text, source_view);
-                
             case PlumbingType.STACK_TRACE:
-                return handle_stack_trace(text, source_view);
-                
             case PlumbingType.GREP_RESULT:
-                return handle_grep_result(text, source_view);
+                return open_with_location(text, source_view, type);
                 
             case PlumbingType.GIT_DIFF:
                 return handle_git_diff(text, source_view);
@@ -164,106 +152,136 @@ public class AcmePlumber : Object {
         }
     }
     
-    // Basic handlers
-    private bool open_url(string url) {
+    // Generic external opener - handles URLs, emails, images
+    private bool open_external(string text, PlumbingType type) {
+        string command = "";
+        
+        switch (type) {
+            case PlumbingType.URL:
+                command = "xdg-open " + Shell.quote(text);
+                break;
+            case PlumbingType.EMAIL:
+                command = "xdg-open mailto:" + text;
+                break;
+            case PlumbingType.IMAGE:
+                command = "xdg-open " + Shell.quote(text);
+                break;
+            default:
+                return false;
+        }
+        
         try {
-            Process.spawn_command_line_async("xdg-open " + Shell.quote(url));
+            Process.spawn_command_line_async(command);
             return true;
         } catch (Error e) {
-            warning("Failed to open URL: %s", e.message);
+            warning("Failed to open %s: %s", text, e.message);
             return false;
         }
     }
     
-    private bool open_email(string email) {
-        try {
-            Process.spawn_command_line_async("xdg-open mailto:" + email);
-            return true;
-        } catch (Error e) {
-            warning("Failed to open email: %s", e.message);
+    // Generic file opener for Acme
+    private bool open_in_acme(string path, AcmeTextView? source_view, PlumbingType type) {
+        var window = AcmeUIHelper.find_root_window(source_view);
+        if (window == null) return false;
+        
+        var target_column = find_target_column(source_view, window);
+        var new_view = new AcmeTextView();
+        target_column.add_text_view(new_view);
+        
+        string resolved_path = resolve_path(path, source_view);
+        new_view.execute_get(resolved_path);
+        
+        if (type == PlumbingType.DIRECTORY) {
+            new_view.ensure_directory_tagline();
+        }
+        
+        return true;
+    }
+    
+    // Generic location-based opener
+    private bool open_with_location(string text, AcmeTextView? source_view, PlumbingType type) {
+        var location = extract_location(text, type);
+        if (location == null) return false;
+        
+        if (!open_in_acme(location.filepath, source_view, PlumbingType.FILE)) {
             return false;
+        }
+        
+        // Navigate to location
+        var window = AcmeUIHelper.find_root_window(source_view);
+        if (window == null) return false;
+        
+        var views = window.get_all_text_views();
+        foreach (var view in views) {
+            if (view.get_filename() == resolve_path(location.filepath, source_view)) {
+                view.scroll_to_line_column(location.line, location.column);
+                return true;
+            }
+        }
+        
+        return false;
+    }
+    
+    // Helper class for location data
+    private class LocationInfo {
+        public string filepath;
+        public int line;
+        public int column;
+        
+        public LocationInfo(string path, int l, int c = 0) {
+            filepath = path;
+            line = l;
+            column = c;
         }
     }
     
-    private bool open_image(string path) {
-        try {
-            Process.spawn_command_line_async("xdg-open " + Shell.quote(path));
-            return true;
-        } catch (Error e) {
-            warning("Failed to open image: %s", e.message);
-            return false;
+    // Extract location info from different pattern types - unified approach
+    private LocationInfo? extract_location(string text, PlumbingType type) {
+        MatchInfo match;
+        
+        switch (type) {
+            case PlumbingType.FILE_LINE:
+                if (compiled_patterns.lookup("file_line").match(text, 0, out match)) {
+                    return new LocationInfo(match.fetch(1), int.parse(match.fetch(2)));
+                }
+                break;
+                
+            case PlumbingType.FILE_LINE_COL:
+                if (compiled_patterns.lookup("file_line_col").match(text, 0, out match)) {
+                    return new LocationInfo(match.fetch(1), int.parse(match.fetch(2)), int.parse(match.fetch(3)));
+                }
+                break;
+                
+            case PlumbingType.COMPILER_ERROR:
+                if (compiled_patterns.lookup("compiler_error").match(text, 0, out match)) {
+                    return new LocationInfo(match.fetch(1), int.parse(match.fetch(2)), int.parse(match.fetch(3)));
+                }
+                break;
+                
+            case PlumbingType.STACK_TRACE:
+                if (compiled_patterns.lookup("stack_trace").match(text, 0, out match)) {
+                    return new LocationInfo(match.fetch(1), int.parse(match.fetch(2)));
+                }
+                break;
+                
+            case PlumbingType.GREP_RESULT:
+                if (compiled_patterns.lookup("grep_result").match(text, 0, out match)) {
+                    return new LocationInfo(match.fetch(1), int.parse(match.fetch(2)));
+                }
+                break;
         }
+        
+        return null;
     }
     
-    private bool open_file(string path, AcmeTextView? source_view) {
-        return open_file_in_acme(resolve_path(path, source_view), source_view);
-    }
-    
-    private bool open_directory(string path, AcmeTextView? source_view) {
-        return open_directory_in_acme(resolve_path(path, source_view), source_view);
-    }
-    
-    // Development-specific handlers
-    private bool open_file_at_line(string text, AcmeTextView? source_view) {
-        MatchInfo match;
-        if (!file_line_pattern.match(text, 0, out match)) return false;
-        
-        string filepath = match.fetch(1);
-        int line = int.parse(match.fetch(2));
-        
-        return open_file_with_navigation(resolve_path(filepath, source_view), line, 0, source_view);
-    }
-    
-    private bool open_file_at_line_col(string text, AcmeTextView? source_view) {
-        MatchInfo match;
-        if (!file_line_col_pattern.match(text, 0, out match)) return false;
-        
-        string filepath = match.fetch(1);
-        int line = int.parse(match.fetch(2));
-        int col = int.parse(match.fetch(3));
-        
-        return open_file_with_navigation(resolve_path(filepath, source_view), line, col, source_view);
-    }
-    
-    private bool handle_compiler_error(string text, AcmeTextView? source_view) {
-        MatchInfo match;
-        if (!compiler_error_pattern.match(text, 0, out match)) return false;
-        
-        string filepath = match.fetch(1);
-        int line = int.parse(match.fetch(2));
-        int col = int.parse(match.fetch(3));
-        
-        return open_file_with_navigation(resolve_path(filepath, source_view), line, col, source_view);
-    }
-    
-    private bool handle_stack_trace(string text, AcmeTextView? source_view) {
-        MatchInfo match;
-        if (!stack_trace_pattern.match(text, 0, out match)) return false;
-        
-        string filepath = match.fetch(1);
-        int line = int.parse(match.fetch(2));
-        
-        return open_file_with_navigation(resolve_path(filepath, source_view), line, 0, source_view);
-    }
-    
-    private bool handle_grep_result(string text, AcmeTextView? source_view) {
-        MatchInfo match;
-        if (!grep_result_pattern.match(text, 0, out match)) return false;
-        
-        string filepath = match.fetch(1);
-        int line = int.parse(match.fetch(2));
-        
-        return open_file_with_navigation(resolve_path(filepath, source_view), line, 0, source_view);
-    }
-    
+    // Git diff handler - special case
     private bool handle_git_diff(string text, AcmeTextView? source_view) {
         MatchInfo match;
-        if (!git_diff_pattern.match(text, 0, out match)) return false;
+        if (!compiled_patterns.lookup("git_diff").match(text, 0, out match)) return false;
         
         int line = int.parse(match.fetch(1));
         
         // For git diff, we need the file context - look for --- or +++ lines
-        // This is a simplified approach
         var window = source_view?.get_root() as AcmeWindow;
         if (window != null) {
             var view = window.get_errors_view();
@@ -289,14 +307,22 @@ public class AcmePlumber : Object {
                 }
                 
                 if (current_file != null) {
-                    return open_file_with_navigation(resolve_path(current_file, source_view), line, 0, source_view);
+                    return open_with_location(current_file + ":" + line.to_string(), source_view, PlumbingType.FILE_LINE);
                 }
             }
         }
         return false;
     }
     
-    // Helper functions
+    // Helper methods
+    private AcmeColumn find_target_column(AcmeTextView? source_view, AcmeWindow window) {
+        if (source_view != null) {
+            var column = AcmeUIHelper.find_parent_of_type<AcmeColumn>(source_view);
+            if (column != null) return column;
+        }
+        return window.get_last_column();
+    }
+    
     private string resolve_path(string path, AcmeTextView? source_view) {
         if (Path.is_absolute(path)) return path;
         
@@ -314,67 +340,5 @@ public class AcmePlumber : Object {
         
         // Fall back to current directory
         return path;
-    }
-    
-    private bool open_file_in_acme(string filepath, AcmeTextView? source_view) {
-        var window = AcmeUIHelper.find_root_window(source_view);
-        if (window == null) return false;
-        
-        // Find appropriate column (prefer source view's column)
-        AcmeColumn? target_column = null;
-        if (source_view != null) {
-            target_column = AcmeUIHelper.find_parent_of_type<AcmeColumn>(source_view);
-        }
-        if (target_column == null) {
-            // Use last column as fallback
-            var column = window.get_last_column();
-            target_column = column;
-        }
-        
-        // Create new text view
-        var new_view = new AcmeTextView();
-        target_column.add_text_view(new_view);
-        new_view.execute_get(filepath);
-        
-        return true;
-    }
-    
-    private bool open_directory_in_acme(string dirpath, AcmeTextView? source_view) {
-        var window = AcmeUIHelper.find_root_window(source_view);
-        if (window == null) return false;
-        
-        AcmeColumn? target_column = null;
-        if (source_view != null) {
-            target_column = AcmeUIHelper.find_parent_of_type<AcmeColumn>(source_view);
-        }
-        if (target_column == null) {
-            var column = window.get_last_column();
-            target_column = column;
-        }
-        
-        var new_view = new AcmeTextView();
-        target_column.add_text_view(new_view);
-        new_view.execute_get(dirpath);
-        new_view.ensure_directory_tagline();
-        
-        return true;
-    }
-    
-    private bool open_file_with_navigation(string filepath, int line, int col, AcmeTextView? source_view) {
-        if (!open_file_in_acme(filepath, source_view)) return false;
-        
-        // Find the newly opened file and navigate to the position
-        var window = AcmeUIHelper.find_root_window(source_view);
-        if (window == null) return false;
-        
-        var text_views = window.get_all_text_views();
-        foreach (var view in text_views) {
-            if (view.get_filename() == filepath) {
-                view.scroll_to_line_column(line, col);
-                return true;
-            }
-        }
-        
-        return false;
     }
 }

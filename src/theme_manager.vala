@@ -6,6 +6,13 @@ public class AcmeThemeManager : Object {
     private static AcmeThemeManager? instance;
     private Gtk.CssProvider provider;
     
+    // Acme color constants
+    private const string TAG_BACKGROUND = "#E9FFFE";      // Light cyan for tags
+    private const string BORDER_COLOR = "#000";          // Black for borders
+    private const string WINDOW_BORDER_COLOR = "#8888cc"; // Dark blue for window borders
+    private const string SCROLLBAR_COLOR = "#99994c";    // Olive for scrollbars
+    private const string SCROLLBAR_SLIDER = "#ffffea";   // Light yellow for slider
+    
     private AcmeThemeManager() {
         provider = new Gtk.CssProvider();
         setup_css();
@@ -19,13 +26,22 @@ public class AcmeThemeManager : Object {
     }
     
     private void setup_css() {
-        // Acme uses these exact colors
-        string tag_background = "#E9FFFE";         // Light cyan for tags
-        string border_color = "#000";              // Black for borders
-        string window_border_color = "#8888cc";    // Dark blue for win borders
-
-        provider.load_from_string("""
-            /* Reset everything */
+        // Build CSS string with constants
+        string css = build_theme_css();
+        
+        provider.load_from_string(css);
+        
+        // Apply globally
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(),
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        );
+    }
+    
+    private string build_theme_css() {
+        return """
+            /* Global reset */
             * {
               margin: 0;
               padding: 0;
@@ -36,64 +52,75 @@ public class AcmeThemeManager : Object {
               min-height: 16px;
               font-size: 16px;
             }
+            
             window {
               background: #FFF;
             }
+            
+            /* Scrollbar styling */
             scrollbar {
-              margin-right: -12px; /* Fix UI bug */
+              margin-right: -12px;
               min-width: 11px;
               border: none;
-              border-right: 1px solid #99994c;
+              border-right: 1px solid """ + SCROLLBAR_COLOR + """;
               box-shadow: none;
-              background: #99994c;
+              background: """ + SCROLLBAR_COLOR + """;
             }
+            
             scrollbar trough {
               min-width: 11px;
               border-radius: 0;
               border: none;
               box-shadow: none;
             }
+            
             scrollbar slider {
               min-width: 11px;
               border-radius: 0;
               border: none;
               box-shadow: none;
-              background: #ffffea;
+              background: """ + SCROLLBAR_SLIDER + """;
             }
-            /* Main tag style */
+            
+            /* Tag bar styles */
             .acme-main-tag {
               padding-left: 16px;
-              background: """ + tag_background + """;
-              border-bottom: 2px solid """ + border_color + """;
+              background: """ + TAG_BACKGROUND + """;
+              border-bottom: 2px solid """ + BORDER_COLOR + """;
             }
             
-            /* Column tag style */
             .acme-column-header {
-              background: """ + tag_background + """;
-              border-bottom: 2px solid """ + border_color + """;
+              background: """ + TAG_BACKGROUND + """;
+              border-bottom: 2px solid """ + BORDER_COLOR + """;
             }
             
-            /* Window tag style */
             .acme-tag {
-              background: """ + tag_background + """;
-              border-bottom: 1px solid """ + window_border_color + """;
+              background: """ + TAG_BACKGROUND + """;
+              border-bottom: 1px solid """ + WINDOW_BORDER_COLOR + """;
             }
             
+            /* Column borders */
             .acme-column {
-              /* No default border */
               border-right: none;
             }
             
-            /* Interior columns only */
             .acme-column-interior {
-              border-right: 2px solid """ + border_color + """;
+              border-right: 2px solid """ + BORDER_COLOR + """;
             }
             
-            /* Rightmost column specifically has no border */
             .acme-column-rightmost {
               border-right: none;
             }
             
+            .acme-text-window {
+              border-top: none;
+            }
+            
+            .acme-text-window:not(:first-child) {
+              border-top: 2px solid """ + BORDER_COLOR + """;
+            }
+            
+            /* Text elements */
             textview {
               border: none;
             }
@@ -102,42 +129,55 @@ public class AcmeThemeManager : Object {
               border: none;
             }
             
+            /* Minimum heights */
             .acme-column-header, .acme-tag, .acme-main-tag {
-              min-height: 16px;
+              min-height: 18px;
             }
-        """);
-        
-        // While Gtk.StyleContext is deprecated in GTK 4.10, we need to use it for compatibility
-        Gtk.StyleContext.add_provider_for_display(
-            Gdk.Display.get_default(),
-            provider,
-            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        );
-    }
-    
-    /* Apply specific styles to widgets that need direct styling */
-    public void apply_text_style(Gtk.TextView text_view) {
-        text_view.add_css_class("acme-text");
+        """;
     }
     
     /**
      * Apply column border styling based on position
-     * @param column The column to style
-     * @param is_rightmost Whether this is the rightmost column
      */
     public void apply_column_border_style(Gtk.Widget column, bool is_rightmost) {
-        // Make sure it has the base column class
+        // Ensure base class is present
         column.add_css_class("acme-column");
         
-        // Remove any existing position-specific classes
+        // Remove existing position classes
         column.remove_css_class("acme-column-interior");
         column.remove_css_class("acme-column-rightmost");
         
-        // Apply the appropriate class based on position
+        // Apply appropriate class
         if (is_rightmost) {
             column.add_css_class("acme-column-rightmost");
         } else {
             column.add_css_class("acme-column-interior");
         }
+    }
+    
+    /**
+     * Apply text view styling
+     */
+    public void apply_text_style(Gtk.TextView text_view) {
+        text_view.add_css_class("acme-text");
+    }
+    
+    // Color accessors for programmatic use
+    public static Gdk.RGBA get_tag_background_color() {
+        Gdk.RGBA color = Gdk.RGBA();
+        color.parse(TAG_BACKGROUND);
+        return color;
+    }
+    
+    public static Gdk.RGBA get_border_color() {
+        Gdk.RGBA color = Gdk.RGBA();
+        color.parse(BORDER_COLOR);
+        return color;
+    }
+    
+    public static Gdk.RGBA get_window_border_color() {
+        Gdk.RGBA color = Gdk.RGBA();
+        color.parse(WINDOW_BORDER_COLOR);
+        return color;
     }
 }

@@ -13,6 +13,19 @@ public class AcmeSearch : Object {
     // Current search state
     private weak AcmeTextView? current_view = null;
     
+    // Unified search result - eliminates duplication
+    private struct SearchMatch {
+        int line;
+        int start_col;
+        int end_col;
+        
+        public SearchMatch(int l, int s, int e) {
+            line = l; 
+            start_col = s; 
+            end_col = e;
+        }
+    }
+    
     private AcmeSearch() {
     }
     
@@ -35,167 +48,112 @@ public class AcmeSearch : Object {
         }
     }
     
-    // Search in the given text view
+    // Unified search method - eliminates duplication between regex and plain text
     public bool search_in_view(AcmeTextView view, bool forward = true) {
         current_view = view;
-        
-        // Get text and current selection from the drawing text view
         string text = view.text_view.get_text();
-        int cursor_pos;
-        
-        // Get current cursor position for starting search
-        if (forward) {
-            // For forward search, start from cursor or end of selection
-            if (view.text_view.has_selection) {
-                // Get end of selection
-                cursor_pos = (int)Math.fmax(
-                    view.text_view.selection_start_line * 1000 + view.text_view.selection_start_col,
-                    view.text_view.selection_end_line * 1000 + view.text_view.selection_end_col
-                );
-            } else {
-                cursor_pos = view.text_view.cursor_line * 1000 + view.text_view.cursor_col;
-            }
-        } else {
-            // For backward search, start from cursor or start of selection
-            if (view.text_view.has_selection) {
-                // Get start of selection
-                cursor_pos = (int)Math.fmin(
-                    view.text_view.selection_start_line * 1000 + view.text_view.selection_start_col,
-                    view.text_view.selection_end_line * 1000 + view.text_view.selection_end_col
-                );
-            } else {
-                cursor_pos = view.text_view.cursor_line * 1000 + view.text_view.cursor_col;
-            }
-        }
-        
-        // Split search area into lines
         string[] lines = text.split("\n");
         
-        // Search based on mode (regex or plain text)
-        if (use_regex) {
-            try {
-                Regex regex = new Regex(search_pattern, 
-                    case_sensitive ? 0 : RegexCompileFlags.CASELESS);
-                
-                int start_line = cursor_pos / 1000;
-                int end_line = forward ? lines.length - 1 : 0;
-                int increment = forward ? 1 : -1;
-                
-                // Search through lines
-                for (int i = start_line; forward ? (i <= end_line) : (i >= end_line); i += increment) {
-                    string line = lines[i];
-                    
-                    // For first line, start from cursor position
-                    string search_text = line;
-                    int start_col = 0;
-                    
-                    if (i == start_line) {
-                        start_col = cursor_pos % 1000;
-                        if (forward) {
-                            search_text = line.substring(start_col);
-                        } else {
-                            search_text = line.substring(0, start_col);
-                        }
-                    }
-                    
-                    // Search in the line
-                    MatchInfo match_info;
-                    if (regex.match(search_text, 0, out match_info)) {
-                        int start_pos, end_pos;
-                        if (match_info.fetch_pos(0, out start_pos, out end_pos)) {
-                            // Convert string positions to line and column
-                            int match_start_col = start_col + start_pos;
-                            int match_end_col = start_col + end_pos;
-                            
-                            // Select the match in the text view
-                            view.text_view.has_selection = true;
-                            view.text_view.selection_start_line = i;
-                            view.text_view.selection_start_col = match_start_col;
-                            view.text_view.selection_end_line = i;
-                            view.text_view.selection_end_col = match_end_col;
-                            
-                            // Position cursor at end of match
-                            view.text_view.cursor_line = i;
-                            view.text_view.cursor_col = match_end_col;
-                            
-                            // Ensure match is visible
-                            view.text_view.ensure_cursor_visible();
-                            view.text_view.queue_draw();
-                            
-                            return true;
-                        }
-                    }
-                }
-            } catch (RegexError e) {
-                warning("Regex error: %s", e.message);
-                return false;
-            }
-        } else {
-            // Plain text search
-            int start_line = cursor_pos / 1000;
-            int end_line = forward ? lines.length - 1 : 0;
-            int increment = forward ? 1 : -1;
-            
-            // Search through lines
-            for (int i = start_line; forward ? (i <= end_line) : (i >= end_line); i += increment) {
-                string line = lines[i];
-                
-                // For first line, start from cursor position
-                int start_col = 0;
-                
-                if (i == start_line) {
-                    start_col = cursor_pos % 1000;
-                    if (forward) {
-                        line = line.substring(start_col);
-                    } else {
-                        line = line.substring(0, start_col);
-                    }
-                }
-                
-                // Search in the line
-                int match_pos = -1;
-                if (forward) {
-                    match_pos = line.index_of(search_pattern);
-                } else {
-                    // For backward search, find the last occurrence
-                    int pos = 0;
-                    int last_pos = -1;
-                    while ((pos = line.index_of(search_pattern, pos)) != -1) {
-                        last_pos = pos;
-                        pos += search_pattern.length;
-                    }
-                    match_pos = last_pos;
-                }
-                
-                if (match_pos != -1) {
-                    // Convert string positions to line and column
-                    int match_start_col = start_col + match_pos;
-                    int match_end_col = match_start_col + search_pattern.length;
-                    
-                    // Select the match in the text view
-                    view.text_view.has_selection = true;
-                    view.text_view.selection_start_line = i;
-                    view.text_view.selection_start_col = match_start_col;
-                    view.text_view.selection_end_line = i;
-                    view.text_view.selection_end_col = match_end_col;
-                    
-                    // Position cursor at end of match
-                    view.text_view.cursor_line = i;
-                    view.text_view.cursor_col = match_end_col;
-                    
-                    // Ensure match is visible
-                    view.text_view.ensure_cursor_visible();
-                    view.text_view.queue_draw();
-                    
-                    return true;
-                }
-            }
+        int start_line = get_search_start_line(view, forward);
+        var match = find_next_match(lines, start_line, forward);
+        
+        if (match != null) {
+            select_match(view, match);
+            return true;
         }
         
         return false;
     }
     
-    // Search in all windows
+    // Get appropriate starting line for search
+    private int get_search_start_line(AcmeTextView view, bool forward) {
+        if (view.text_view.has_selection) {
+            return forward ? 
+                (int)Math.fmax(view.text_view.selection_start_line, view.text_view.selection_end_line) :
+                (int)Math.fmin(view.text_view.selection_start_line, view.text_view.selection_end_line);
+        }
+        return view.text_view.cursor_line;
+    }
+    
+    // Single method handles both regex and plain text - no duplication
+    private SearchMatch? find_next_match(string[] lines, int start_line, bool forward) {
+        int end_line = forward ? lines.length - 1 : 0;
+        int increment = forward ? 1 : -1;
+        
+        // Search through lines
+        for (int line = start_line; 
+             forward ? (line <= end_line) : (line >= end_line); 
+             line += increment) {
+            
+            var match = search_in_line(lines[line], line);
+            if (match != null) {
+                return match;
+            }
+        }
+        
+        return null;
+    }
+    
+    // Unified line search - handles both regex and plain text in one place
+    private SearchMatch? search_in_line(string line, int line_num) {
+        if (use_regex) {
+            return search_regex_in_line(line, line_num);
+        } else {
+            return search_text_in_line(line, line_num);
+        }
+    }
+    
+    // Regex search in a single line
+    private SearchMatch? search_regex_in_line(string line, int line_num) {
+        try {
+            var regex = new Regex(search_pattern, 
+                case_sensitive ? 0 : RegexCompileFlags.CASELESS);
+            
+            MatchInfo match_info;
+            if (regex.match(line, 0, out match_info)) {
+                int start_pos, end_pos;
+                if (match_info.fetch_pos(0, out start_pos, out end_pos)) {
+                    return SearchMatch(line_num, start_pos, end_pos);
+                }
+            }
+        } catch (RegexError e) {
+            warning("Regex error: %s", e.message);
+        }
+        
+        return null;
+    }
+    
+    // Plain text search in a single line
+    private SearchMatch? search_text_in_line(string line, int line_num) {
+        string search_line = case_sensitive ? line : line.down();
+        string search_term = case_sensitive ? search_pattern : search_pattern.down();
+        
+        int pos = search_line.index_of(search_term);
+        if (pos != -1) {
+            return SearchMatch(line_num, pos, pos + search_pattern.length);
+        }
+        
+        return null;
+    }
+    
+    // Apply the search match to the text view
+    private void select_match(AcmeTextView view, SearchMatch match) {
+        view.text_view.has_selection = true;
+        view.text_view.selection_start_line = match.line;
+        view.text_view.selection_start_col = match.start_col;
+        view.text_view.selection_end_line = match.line;
+        view.text_view.selection_end_col = match.end_col;
+        
+        // Position cursor at end of match
+        view.text_view.cursor_line = match.line;
+        view.text_view.cursor_col = match.end_col;
+        
+        // Ensure match is visible
+        view.text_view.ensure_cursor_visible();
+        view.text_view.queue_draw();
+    }
+    
+    // Simplified search all - reuses search_in_view instead of duplicating logic
     public bool search_all(bool forward = true) {
         // Get the active window
         var window = current_view != null ? 
